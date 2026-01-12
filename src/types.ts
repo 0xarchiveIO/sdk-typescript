@@ -376,11 +376,17 @@ export type WsServerMessage =
   | WsStreamCompleted
   | WsStreamStopped;
 
-/** WebSocket connection options */
+/**
+ * WebSocket connection options.
+ *
+ * The server sends WebSocket ping frames every 30 seconds and will disconnect
+ * idle connections after 60 seconds. The SDK automatically handles keep-alive
+ * by sending application-level pings at the configured interval.
+ */
 export interface WsOptions {
   /** API key for authentication */
   apiKey: string;
-  /** WebSocket URL (defaults to wss://ws.0xarchive.io) */
+  /** WebSocket URL (defaults to wss://api.0xarchive.io/ws) */
   wsUrl?: string;
   /** Auto-reconnect on disconnect (defaults to true) */
   autoReconnect?: boolean;
@@ -388,7 +394,7 @@ export interface WsOptions {
   reconnectDelay?: number;
   /** Maximum reconnect attempts (defaults to 10) */
   maxReconnectAttempts?: number;
-  /** Ping interval in ms (defaults to 30000) */
+  /** Ping interval in ms to keep connection alive (defaults to 30000). Server disconnects after 60s idle. */
   pingInterval?: number;
 }
 

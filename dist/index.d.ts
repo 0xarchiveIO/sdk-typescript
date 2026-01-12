@@ -125,7 +125,7 @@ interface OpenInterest {
     timestamp: number;
 }
 /** WebSocket channel types */
-type WsChannel = 'orderbook' | 'trades' | 'ticker' | 'all_tickers';
+type WsChannel = 'orderbook' | 'trades' | 'ticker' | 'all_tickers' | 'candles' | 'funding' | 'openinterest';
 /** Subscribe message from client */
 interface WsSubscribe {
     op: 'subscribe';
@@ -142,8 +142,50 @@ interface WsUnsubscribe {
 interface WsPing {
     op: 'ping';
 }
+/** Replay message from client - replays historical data with timing preserved */
+interface WsReplay {
+    op: 'replay';
+    channel: WsChannel;
+    coin?: string;
+    /** Start timestamp (Unix ms) */
+    start: number;
+    /** End timestamp (Unix ms, defaults to now) */
+    end?: number;
+    /** Playback speed multiplier (1 = real-time, 10 = 10x faster) */
+    speed?: number;
+}
+/** Replay control messages */
+interface WsReplayPause {
+    op: 'replay.pause';
+}
+interface WsReplayResume {
+    op: 'replay.resume';
+}
+interface WsReplaySeek {
+    op: 'replay.seek';
+    timestamp: number;
+}
+interface WsReplayStop {
+    op: 'replay.stop';
+}
+/** Stream message from client - bulk download historical data */
+interface WsStream {
+    op: 'stream';
+    channel: WsChannel;
+    coin?: string;
+    /** Start timestamp (Unix ms) */
+    start: number;
+    /** End timestamp (Unix ms) */
+    end: number;
+    /** Batch size (records per message) */
+    batch_size?: number;
+}
+/** Stream control messages */
+interface WsStreamStop {
+    op: 'stream.stop';
+}
 /** Client message union type */
-type WsClientMessage = WsSubscribe | WsUnsubscribe | WsPing;
+type WsClientMessage = WsSubscribe | WsUnsubscribe | WsPing | WsReplay | WsReplayPause | WsReplayResume | WsReplaySeek | WsReplayStop | WsStream | WsStreamStop;
 /** Subscription confirmed from server */
 interface WsSubscribed {
     type: 'subscribed';
@@ -172,13 +214,91 @@ interface WsData<T = unknown> {
     coin: string;
     data: T;
 }
+/** Replay started response */
+interface WsReplayStarted {
+    type: 'replay_started';
+    channel: WsChannel;
+    coin: string;
+    start: number;
+    end: number;
+    speed: number;
+    total_records: number;
+}
+/** Replay paused response */
+interface WsReplayPaused {
+    type: 'replay_paused';
+    current_timestamp: number;
+}
+/** Replay resumed response */
+interface WsReplayResumed {
+    type: 'replay_resumed';
+    current_timestamp: number;
+}
+/** Replay completed response */
+interface WsReplayCompleted {
+    type: 'replay_completed';
+    channel: WsChannel;
+    coin: string;
+    records_sent: number;
+}
+/** Replay stopped response */
+interface WsReplayStopped {
+    type: 'replay_stopped';
+}
+/** Historical data point (replay mode) */
+interface WsHistoricalData<T = unknown> {
+    type: 'historical_data';
+    channel: WsChannel;
+    coin: string;
+    timestamp: number;
+    data: T;
+}
+/** Stream started response */
+interface WsStreamStarted {
+    type: 'stream_started';
+    channel: WsChannel;
+    coin: string;
+    start: number;
+    end: number;
+    batch_size: number;
+    total_records: number;
+}
+/** Stream progress response */
+interface WsStreamProgress {
+    type: 'stream_progress';
+    records_sent: number;
+    total_records: number;
+    progress_pct: number;
+}
+/** Stream batch (bulk data) */
+interface WsHistoricalBatch<T = unknown> {
+    type: 'historical_batch';
+    channel: WsChannel;
+    coin: string;
+    batch_index: number;
+    records: Array<{
+        timestamp: number;
+        data: T;
+    }>;
+}
+/** Stream completed response */
+interface WsStreamCompleted {
+    type: 'stream_completed';
+    channel: WsChannel;
+    coin: string;
+    records_sent: number;
+}
+/** Stream stopped response */
+interface WsStreamStopped {
+    type: 'stream_stopped';
+}
 /** Server message union type */
-type WsServerMessage = WsSubscribed | WsUnsubscribed | WsPong | WsError | WsData;
+type WsServerMessage = WsSubscribed | WsUnsubscribed | WsPong | WsError | WsData | WsReplayStarted | WsReplayPaused | WsReplayResumed | WsReplayCompleted | WsReplayStopped | WsHistoricalData | WsStreamStarted | WsStreamProgress | WsHistoricalBatch | WsStreamCompleted | WsStreamStopped;
 /** WebSocket connection options */
 interface WsOptions {
     /** API key for authentication */
     apiKey: string;
-    /** WebSocket URL (defaults to wss://ws.0xarchive.io) */
+    /** WebSocket URL (defaults to wss://api.0xarchive.io/ws) */
     wsUrl?: string;
     /** Auto-reconnect on disconnect (defaults to true) */
     autoReconnect?: boolean;
@@ -506,7 +626,47 @@ declare class OxArchive {
 }
 
 /**
- * WebSocket client for 0xarchive real-time streaming
+ * WebSocket client for 0xarchive real-time streaming, replay, and bulk download
+ *
+ * @example Real-time streaming
+ * ```typescript
+ * const ws = new OxArchiveWs({ apiKey: 'ox_...' });
+ * ws.connect({
+ *   onMessage: (msg) => console.log(msg)
+ * });
+ * ws.subscribeOrderbook('BTC');
+ * ```
+ *
+ * @example Historical replay (like Tardis.dev)
+ * ```typescript
+ * const ws = new OxArchiveWs({ apiKey: 'ox_...' });
+ * ws.connect();
+ * ws.onHistoricalData((coin, timestamp, data) => {
+ *   console.log(`${new Date(timestamp)}: ${data.mid_price}`);
+ * });
+ * ws.replay('orderbook', 'BTC', {
+ *   start: Date.now() - 86400000,
+ *   speed: 10 // 10x speed
+ * });
+ * ```
+ *
+ * @example Bulk streaming (like Databento)
+ * ```typescript
+ * const ws = new OxArchiveWs({ apiKey: 'ox_...' });
+ * ws.connect();
+ * const batches: OrderBook[] = [];
+ * ws.onBatch((coin, records) => {
+ *   batches.push(...records.map(r => r.data));
+ * });
+ * ws.onStreamComplete((channel, coin, count) => {
+ *   console.log(`Downloaded ${count} records`);
+ * });
+ * ws.stream('orderbook', 'ETH', {
+ *   start: Date.now() - 3600000,
+ *   end: Date.now(),
+ *   batchSize: 1000
+ * });
+ * ```
  */
 
 /**
@@ -571,6 +731,99 @@ declare class OxArchiveWs {
      */
     unsubscribeAllTickers(): void;
     /**
+     * Start historical replay with timing preserved
+     *
+     * @param channel - Data channel to replay
+     * @param coin - Trading pair (e.g., 'BTC', 'ETH')
+     * @param options - Replay options
+     *
+     * @example
+     * ```typescript
+     * ws.replay('orderbook', 'BTC', {
+     *   start: Date.now() - 86400000, // 24 hours ago
+     *   speed: 10 // 10x faster than real-time
+     * });
+     * ```
+     */
+    replay(channel: WsChannel, coin: string, options: {
+        start: number;
+        end?: number;
+        speed?: number;
+    }): void;
+    /**
+     * Pause the current replay
+     */
+    replayPause(): void;
+    /**
+     * Resume a paused replay
+     */
+    replayResume(): void;
+    /**
+     * Seek to a specific timestamp in the replay
+     * @param timestamp - Unix timestamp in milliseconds
+     */
+    replaySeek(timestamp: number): void;
+    /**
+     * Stop the current replay
+     */
+    replayStop(): void;
+    /**
+     * Start bulk streaming for fast data download
+     *
+     * @param channel - Data channel to stream
+     * @param coin - Trading pair (e.g., 'BTC', 'ETH')
+     * @param options - Stream options
+     *
+     * @example
+     * ```typescript
+     * ws.stream('orderbook', 'ETH', {
+     *   start: Date.now() - 3600000, // 1 hour ago
+     *   end: Date.now(),
+     *   batchSize: 1000
+     * });
+     * ```
+     */
+    stream(channel: WsChannel, coin: string, options: {
+        start: number;
+        end: number;
+        batchSize?: number;
+    }): void;
+    /**
+     * Stop the current bulk stream
+     */
+    streamStop(): void;
+    /**
+     * Handle historical data points (replay mode)
+     */
+    onHistoricalData<T = unknown>(handler: (coin: string, timestamp: number, data: T) => void): void;
+    /**
+     * Handle batched data (bulk stream mode)
+     */
+    onBatch<T = unknown>(handler: (coin: string, records: Array<{
+        timestamp: number;
+        data: T;
+    }>) => void): void;
+    /**
+     * Handle replay started event
+     */
+    onReplayStart(handler: (channel: WsChannel, coin: string, totalRecords: number, speed: number) => void): void;
+    /**
+     * Handle replay completed event
+     */
+    onReplayComplete(handler: (channel: WsChannel, coin: string, recordsSent: number) => void): void;
+    /**
+     * Handle stream started event
+     */
+    onStreamStart(handler: (channel: WsChannel, coin: string, totalRecords: number) => void): void;
+    /**
+     * Handle stream progress event
+     */
+    onStreamProgress(handler: (recordsSent: number, totalRecords: number, progressPct: number) => void): void;
+    /**
+     * Handle stream completed event
+     */
+    onStreamComplete(handler: (channel: WsChannel, coin: string, recordsSent: number) => void): void;
+    /**
      * Get current connection state
      */
     getState(): WsConnectionState;
@@ -600,4 +853,4 @@ declare class OxArchiveWs {
     private clearReconnectTimer;
 }
 
-export { type ApiError, type ApiResponse, type Candle, type CandleInterval, type ClientOptions, type FundingRate, type GetCandlesParams, type GetOrderBookParams, type GetTradesParams, type Instrument, type OpenInterest, type OrderBook, type OrderBookHistoryParams, OxArchive, OxArchiveError, OxArchiveWs, type PaginationParams, type PriceLevel, type TimeRangeParams, type Trade, type WsChannel, type WsClientMessage, type WsConnectionState, type WsData, type WsError, type WsEventHandlers, type WsOptions, type WsPing, type WsPong, type WsServerMessage, type WsSubscribe, type WsSubscribed, type WsUnsubscribe, type WsUnsubscribed, OxArchive as default };
+export { type ApiError, type ApiResponse, type Candle, type CandleInterval, type ClientOptions, type FundingRate, type GetCandlesParams, type GetOrderBookParams, type GetTradesParams, type Instrument, type OpenInterest, type OrderBook, type OrderBookHistoryParams, OxArchive, OxArchiveError, OxArchiveWs, type PaginationParams, type PriceLevel, type TimeRangeParams, type Trade, type WsChannel, type WsClientMessage, type WsConnectionState, type WsData, type WsError, type WsEventHandlers, type WsHistoricalBatch, type WsHistoricalData, type WsOptions, type WsPing, type WsPong, type WsReplay, type WsReplayCompleted, type WsReplayPause, type WsReplayPaused, type WsReplayResume, type WsReplayResumed, type WsReplaySeek, type WsReplayStarted, type WsReplayStop, type WsReplayStopped, type WsServerMessage, type WsStream, type WsStreamCompleted, type WsStreamProgress, type WsStreamStarted, type WsStreamStop, type WsStreamStopped, type WsSubscribe, type WsSubscribed, type WsUnsubscribe, type WsUnsubscribed, OxArchive as default };

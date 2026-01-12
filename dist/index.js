@@ -339,7 +339,7 @@ var OxArchive = class {
 };
 
 // src/websocket.ts
-var DEFAULT_WS_URL = "wss://ws.0xarchive.io";
+var DEFAULT_WS_URL = "wss://api.0xarchive.io/ws";
 var DEFAULT_PING_INTERVAL = 3e4;
 var DEFAULT_RECONNECT_DELAY = 1e3;
 var DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;
@@ -479,6 +479,188 @@ var OxArchiveWs = class {
    */
   unsubscribeAllTickers() {
     this.unsubscribe("all_tickers");
+  }
+  // ==========================================================================
+  // Historical Replay (Option B) - Like Tardis.dev
+  // ==========================================================================
+  /**
+   * Start historical replay with timing preserved
+   *
+   * @param channel - Data channel to replay
+   * @param coin - Trading pair (e.g., 'BTC', 'ETH')
+   * @param options - Replay options
+   *
+   * @example
+   * ```typescript
+   * ws.replay('orderbook', 'BTC', {
+   *   start: Date.now() - 86400000, // 24 hours ago
+   *   speed: 10 // 10x faster than real-time
+   * });
+   * ```
+   */
+  replay(channel, coin, options) {
+    this.send({
+      op: "replay",
+      channel,
+      coin,
+      start: options.start,
+      end: options.end,
+      speed: options.speed ?? 1
+    });
+  }
+  /**
+   * Pause the current replay
+   */
+  replayPause() {
+    this.send({ op: "replay.pause" });
+  }
+  /**
+   * Resume a paused replay
+   */
+  replayResume() {
+    this.send({ op: "replay.resume" });
+  }
+  /**
+   * Seek to a specific timestamp in the replay
+   * @param timestamp - Unix timestamp in milliseconds
+   */
+  replaySeek(timestamp) {
+    this.send({ op: "replay.seek", timestamp });
+  }
+  /**
+   * Stop the current replay
+   */
+  replayStop() {
+    this.send({ op: "replay.stop" });
+  }
+  // ==========================================================================
+  // Bulk Streaming (Option D) - Like Databento
+  // ==========================================================================
+  /**
+   * Start bulk streaming for fast data download
+   *
+   * @param channel - Data channel to stream
+   * @param coin - Trading pair (e.g., 'BTC', 'ETH')
+   * @param options - Stream options
+   *
+   * @example
+   * ```typescript
+   * ws.stream('orderbook', 'ETH', {
+   *   start: Date.now() - 3600000, // 1 hour ago
+   *   end: Date.now(),
+   *   batchSize: 1000
+   * });
+   * ```
+   */
+  stream(channel, coin, options) {
+    this.send({
+      op: "stream",
+      channel,
+      coin,
+      start: options.start,
+      end: options.end,
+      batch_size: options.batchSize ?? 1e3
+    });
+  }
+  /**
+   * Stop the current bulk stream
+   */
+  streamStop() {
+    this.send({ op: "stream.stop" });
+  }
+  // ==========================================================================
+  // Event Handlers for Replay/Stream
+  // ==========================================================================
+  /**
+   * Handle historical data points (replay mode)
+   */
+  onHistoricalData(handler) {
+    const originalHandler = this.handlers.onMessage;
+    this.handlers.onMessage = (message) => {
+      if (message.type === "historical_data") {
+        const msg = message;
+        handler(msg.coin, msg.timestamp, msg.data);
+      }
+      originalHandler?.(message);
+    };
+  }
+  /**
+   * Handle batched data (bulk stream mode)
+   */
+  onBatch(handler) {
+    const originalHandler = this.handlers.onMessage;
+    this.handlers.onMessage = (message) => {
+      if (message.type === "historical_batch") {
+        const msg = message;
+        handler(msg.coin, msg.records);
+      }
+      originalHandler?.(message);
+    };
+  }
+  /**
+   * Handle replay started event
+   */
+  onReplayStart(handler) {
+    const originalHandler = this.handlers.onMessage;
+    this.handlers.onMessage = (message) => {
+      if (message.type === "replay_started") {
+        const msg = message;
+        handler(msg.channel, msg.coin, msg.total_records, msg.speed);
+      }
+      originalHandler?.(message);
+    };
+  }
+  /**
+   * Handle replay completed event
+   */
+  onReplayComplete(handler) {
+    const originalHandler = this.handlers.onMessage;
+    this.handlers.onMessage = (message) => {
+      if (message.type === "replay_completed") {
+        const msg = message;
+        handler(msg.channel, msg.coin, msg.records_sent);
+      }
+      originalHandler?.(message);
+    };
+  }
+  /**
+   * Handle stream started event
+   */
+  onStreamStart(handler) {
+    const originalHandler = this.handlers.onMessage;
+    this.handlers.onMessage = (message) => {
+      if (message.type === "stream_started") {
+        const msg = message;
+        handler(msg.channel, msg.coin, msg.total_records);
+      }
+      originalHandler?.(message);
+    };
+  }
+  /**
+   * Handle stream progress event
+   */
+  onStreamProgress(handler) {
+    const originalHandler = this.handlers.onMessage;
+    this.handlers.onMessage = (message) => {
+      if (message.type === "stream_progress") {
+        const msg = message;
+        handler(msg.records_sent, msg.total_records, msg.progress_pct);
+      }
+      originalHandler?.(message);
+    };
+  }
+  /**
+   * Handle stream completed event
+   */
+  onStreamComplete(handler) {
+    const originalHandler = this.handlers.onMessage;
+    this.handlers.onMessage = (message) => {
+      if (message.type === "stream_completed") {
+        const msg = message;
+        handler(msg.channel, msg.coin, msg.records_sent);
+      }
+      originalHandler?.(message);
+    };
   }
   /**
    * Get current connection state

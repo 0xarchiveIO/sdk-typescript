@@ -243,7 +243,7 @@ ws.streamStop();
 ```typescript
 const ws = new OxArchiveWs({
   apiKey: 'ox_your_api_key',
-  wsUrl: 'wss://ws.0xarchive.io',  // Optional
+  wsUrl: 'wss://api.0xarchive.io/ws',  // Optional
   autoReconnect: true,             // Auto-reconnect on disconnect
   reconnectDelay: 1000,            // Initial reconnect delay (ms)
   maxReconnectAttempts: 10,        // Max reconnect attempts

@@ -60,13 +60,23 @@ import type {
   WsStreamProgress,
 } from './types';
 
-const DEFAULT_WS_URL = 'wss://ws.0xarchive.io';
-const DEFAULT_PING_INTERVAL = 30000;
+const DEFAULT_WS_URL = 'wss://api.0xarchive.io/ws';
+const DEFAULT_PING_INTERVAL = 30000; // 30 seconds
 const DEFAULT_RECONNECT_DELAY = 1000;
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 10;
 
+// Server idle timeout is 60 seconds. The SDK sends pings every 30 seconds
+// to keep the connection alive. Browser WebSocket API automatically responds
+// to WebSocket protocol-level ping frames from the server.
+
 /**
- * WebSocket client for real-time data streaming
+ * WebSocket client for real-time data streaming.
+ *
+ * **Keep-Alive:** The server sends WebSocket ping frames every 30 seconds
+ * and will disconnect idle connections after 60 seconds. This SDK automatically
+ * handles keep-alive by sending application-level pings at the configured interval
+ * (default: 30 seconds). The browser WebSocket API automatically responds to
+ * server ping frames.
  */
 export class OxArchiveWs {
   private ws: WebSocket | null = null;
